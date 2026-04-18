@@ -11,11 +11,22 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8000;
+const HOST = process.env.HOST || '0.0.0.0';
+
+// Process-level error handling
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 // Security middleware
 app.use(helmet());
 app.use(cors({
-  origin: true, //process.env.CORE_SERVICE_URL || 'http://localhost:3000',
+  origin: true,
   credentials: true,
 }));
 
@@ -29,11 +40,12 @@ if (process.env.NODE_ENV === 'development') {
   app.use(morgan('combined'));
 }
 
-// Rate limiting
+// Rate limiting — skip health checks
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000'),
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '50'),
   message: 'Too many requests from this IP',
+  skip: (req) => req.path === '/health' || req.path === '/api/v1/ai/health',
 });
 app.use(limiter);
 
@@ -41,7 +53,7 @@ app.use(limiter);
 const apiKey = process.env.API_KEY;
 if (apiKey) {
   app.use((req, res, next) => {
-    if (req.path === '/health') {
+    if (req.path === '/health' || req.path === '/api/v1/ai/health') {
       return next();
     }
 
@@ -56,6 +68,15 @@ if (apiKey) {
   });
 }
 
+// Root health check (for Railway / direct container checks)
+app.get('/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'aivanta-ai',
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // Routes
 app.use('/api/v1/ai', routes);
 app.use('/embeddings', embeddingRoutes);
@@ -65,8 +86,8 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   console.error('Error:', err);
   res.status(500).json({
     success: false,
-    error: process.env.NODE_ENV === 'production' 
-      ? 'Internal server error' 
+    error: process.env.NODE_ENV === 'production'
+      ? 'Internal server error'
       : err.message,
   });
 });
@@ -79,7 +100,18 @@ app.use((_req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`AI Service running on port ${PORT}`);
+const server = app.listen(Number(PORT), HOST, () => {
+  console.log(`AI Service running on http://${HOST}:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Health check: http://${HOST}:${PORT}/health`);
+  console.log(`API health check: http://${HOST}:${PORT}/api/v1/ai/health`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
 });
