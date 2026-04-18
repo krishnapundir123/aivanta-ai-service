@@ -8,6 +8,7 @@ export interface Agent {
   currentWorkload: number;
   avgResolutionTime: number;
   slaPerformance: number;
+  isActive?: boolean;
 }
 
 export interface TicketForRouting {

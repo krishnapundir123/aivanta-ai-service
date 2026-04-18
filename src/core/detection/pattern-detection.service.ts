@@ -1,4 +1,4 @@
-import { generateEmbedding, generateBatchEmbeddings } from '../../infrastructure/llm/openai-client';
+import { generateEmbedding, generateEmbeddings } from '../../infrastructure/llm/openai-client';
 
 export interface TicketForAnalysis {
   id: string;
@@ -211,7 +211,7 @@ export async function detectPatterns(
   try {
     // Generate embeddings for all tickets
     const texts = tickets.map(t => `${t.title} ${t.description}`);
-    const embeddings = await generateBatchEmbeddings(texts);
+    const embeddings = await generateEmbeddings(texts);
     
     // Cluster tickets
     const clusters = await clusterTickets(

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { generateEmbedding, generateBatchEmbeddings } from '../../infrastructure/llm/openai-client';
+import { generateEmbedding, generateEmbeddings } from '../../infrastructure/llm/openai-client';
 
 const router = Router();
 
@@ -49,7 +49,7 @@ router.post('/batch', async (req, res, next) => {
       });
     }
 
-    const embeddings = await generateBatchEmbeddings(texts);
+    const embeddings = await generateEmbeddings(texts);
 
     res.json({
       success: true,
