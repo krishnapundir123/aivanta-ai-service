@@ -244,25 +244,140 @@ router.post('/predict/sla-breach', async (req, res, next) => {
   }
 });
 
-// Search endpoint
-router.post('/search', async (req, res) => {
+// Unified summarize endpoint — fetches entity from core service then summarizes
+router.post('/summarize', async (req, res, next) => {
   try {
-    const { query, sources, limit, threshold } = req.body;
-    
-    // Mock search - in production would use vector search
-    res.json({
+    const { type, ticketId, threadId } = req.body;
+
+    if (!type) {
+      return res.status(400).json({ success: false, error: 'type is required' });
+    }
+
+    const coreUrl = process.env.CORE_SERVICE_URL || 'http://localhost:3000';
+    const coreKey = process.env.CORE_SERVICE_API_KEY;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (coreKey) headers['x-api-key'] = coreKey;
+
+    // Forward the caller's auth token so the core service can authorize the request
+    const authHeader = req.headers['authorization'];
+    if (authHeader) headers['authorization'] = authHeader as string;
+    const cookieHeader = req.headers['cookie'];
+    if (cookieHeader) headers['cookie'] = cookieHeader as string;
+
+    if (type === 'ticket') {
+      const id = ticketId;
+      if (!id) {
+        return res.status(400).json({ success: false, error: 'ticketId is required for type=ticket' });
+      }
+
+      const ticketRes = await fetch(`${coreUrl}/api/v1/tickets/${id}`, { headers });
+      if (!ticketRes.ok) {
+        return res.status(ticketRes.status).json({ success: false, error: `Core service returned ${ticketRes.status}` });
+      }
+      const ticketData = (await ticketRes.json()) as { data?: any; [k: string]: any };
+      const ticket = ticketData.data ?? ticketData;
+
+      const messagesRes = await fetch(`${coreUrl}/api/v1/tickets/${id}/messages`, { headers });
+      let messages: any[] = [];
+      if (messagesRes.ok) {
+        const messagesData = (await messagesRes.json()) as { data?: any[] };
+        messages = messagesData.data ?? [];
+      }
+
+      const result = await summarizeTicket({
+        title: ticket.title || ticket.subject || '',
+        description: ticket.description || ticket.body || '',
+        messages: messages.map((m: any) => ({
+          author: m.authorName || m.author || 'Unknown',
+          content: m.content || m.body || '',
+          isInternal: m.isInternal ?? false,
+        })),
+        status: ticket.status || 'OPEN',
+        priority: ticket.priority || 'P2',
+      });
+
+      return res.json({ success: true, data: result });
+    }
+
+    if (type === 'thread') {
+      const id = threadId || ticketId;
+      if (!id) {
+        return res.status(400).json({ success: false, error: 'threadId is required for type=thread' });
+      }
+
+      const threadRes = await fetch(`${coreUrl}/api/v1/threads/${id}/messages`, { headers });
+      if (!threadRes.ok) {
+        return res.status(threadRes.status).json({ success: false, error: `Core service returned ${threadRes.status}` });
+      }
+      const threadData = (await threadRes.json()) as { data?: any[] };
+      const messages: any[] = threadData.data ?? [];
+
+      const result = await summarizeThread({
+        messages: messages.map((m: any) => ({
+          author: m.authorName || m.author || 'Unknown',
+          content: m.content || m.body || '',
+          timestamp: m.createdAt || m.timestamp || new Date().toISOString(),
+        })),
+      });
+
+      return res.json({ success: true, data: result });
+    }
+
+    return res.status(400).json({ success: false, error: `Unsupported type: ${type}` });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Search endpoint
+router.post('/search', async (req, res, next) => {
+  try {
+    const { query, type, sources, limit = 5, threshold } = req.body;
+
+    if (!query) {
+      return res.status(400).json({ success: false, error: 'query is required' });
+    }
+
+    const coreUrl = process.env.CORE_SERVICE_URL || 'http://localhost:3000';
+    const coreKey = process.env.CORE_SERVICE_API_KEY;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (coreKey) headers['x-api-key'] = coreKey;
+
+    const authHeader = req.headers['authorization'];
+    if (authHeader) headers['authorization'] = authHeader as string;
+    const cookieHeader = req.headers['cookie'];
+    if (cookieHeader) headers['cookie'] = cookieHeader as string;
+
+    // Determine which entity to search based on type
+    const entityPath = type === 'ticket' ? 'tickets' : type === 'kb' ? 'kb-articles' : type || 'tickets';
+
+    const searchRes = await fetch(
+      `${coreUrl}/api/v1/${entityPath}?search=${encodeURIComponent(query)}&limit=${limit}`,
+      { headers }
+    );
+
+    if (!searchRes.ok) {
+      // Degrade gracefully — return empty results rather than a hard error
+      return res.json({
+        success: true,
+        data: { results: [], query, type: type || 'ticket', total: 0 },
+      });
+    }
+
+    const searchData = (await searchRes.json()) as { data?: any[]; items?: any[]; [k: string]: any };
+    const items: any[] = searchData.data ?? searchData.items ?? [];
+
+    return res.json({
       success: true,
       data: {
-        results: [],
+        results: items.slice(0, limit),
         query,
-        sources: sources || ['tickets', 'kb'],
+        type: type || 'ticket',
+        total: items.length,
       },
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Search failed',
-    });
+    next(error);
   }
 });
 

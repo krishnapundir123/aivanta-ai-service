@@ -15,7 +15,7 @@ const PORT = process.env.PORT || 8000;
 // Security middleware
 app.use(helmet());
 app.use(cors({
-  origin: process.env.CORE_SERVICE_URL || 'http://localhost:3000',
+  origin: true, //process.env.CORE_SERVICE_URL || 'http://localhost:3000',
   credentials: true,
 }));
 
@@ -57,7 +57,7 @@ if (apiKey) {
 }
 
 // Routes
-app.use('/', routes);
+app.use('/api/v1/ai', routes);
 app.use('/embeddings', embeddingRoutes);
 
 // Error handling
